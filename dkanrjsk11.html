@@ -1,0 +1,472 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>정다면체 꼭짓점 탐험 3D</title>
+    
+    <!-- Tailwind CSS (UI 스타일링 용) -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Three.js 및 OrbitControls CDN (Import Map 사용) -->
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+            }
+        }
+    </script>
+
+    <style>
+        /* 캔버스 영역의 기본 설정 */
+        body, html { margin: 0; padding: 0; height: 100%; overflow: hidden; }
+        #canvas-container { cursor: grab; }
+        #canvas-container:active { cursor: grabbing; }
+        
+        /* 슬라이더 커스텀 스타일 */
+        input[type=range] {
+            accent-color: #4f46e5; /* Tailwind indigo-600 */
+        }
+    </style>
+</head>
+<body class="flex flex-col md:flex-row h-screen bg-gray-50 text-gray-800">
+
+    <!-- 좌측 컨트롤 패널 -->
+    <aside class="w-full md:w-96 bg-white shadow-xl flex flex-col z-10 p-6 overflow-y-auto">
+        <h1 class="text-2xl font-bold text-indigo-700 mb-2">정다면체 꼭짓점 탐험</h1>
+        <p class="text-sm text-gray-500 mb-6">다각형이 모여 입체가 되는 원리를 알아봅시다.</p>
+
+        <!-- 1. 다각형 선택 -->
+        <div class="mb-6">
+            <h2 class="text-lg font-semibold mb-3">1. 다각형 선택</h2>
+            <div class="flex gap-2">
+                <button id="btn-triangle" class="shape-btn flex-1 py-2 rounded-lg border-2 border-indigo-500 bg-indigo-50 text-indigo-700 font-medium transition" data-shape="3">정삼각형</button>
+                <button id="btn-square" class="shape-btn flex-1 py-2 rounded-lg border-2 border-gray-200 text-gray-600 hover:bg-gray-50 font-medium transition" data-shape="4">정사각형</button>
+                <button id="btn-pentagon" class="shape-btn flex-1 py-2 rounded-lg border-2 border-gray-200 text-gray-600 hover:bg-gray-50 font-medium transition" data-shape="5">정오각형</button>
+            </div>
+        </div>
+
+        <!-- 2. 개수 조절 -->
+        <div class="mb-6 bg-gray-50 p-4 rounded-lg border border-gray-100">
+            <div class="flex justify-between items-center mb-3">
+                <h2 class="text-lg font-semibold">2. 모이는 개수</h2>
+                <span id="count-display" class="bg-indigo-100 text-indigo-800 font-bold px-3 py-1 rounded-full text-sm">3개</span>
+            </div>
+            <input type="range" id="count-slider" min="1" max="5" value="3" class="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer mb-2">
+            <div class="flex justify-between text-xs text-gray-400">
+                <span>1개</span>
+                <span id="max-label">5개</span>
+            </div>
+        </div>
+
+        <!-- 수학적 설명 패널 -->
+        <div class="mb-6 p-4 rounded-lg bg-blue-50 border border-blue-100 text-sm">
+            <h3 class="font-bold text-blue-800 mb-2">📐 수학 이야기</h3>
+            <ul class="space-y-1 text-blue-700">
+                <li>• 한 내각의 크기: <span id="info-angle" class="font-bold">60°</span></li>
+                <li>• 모인 각의 합: <span id="info-sum" class="font-bold text-red-500">180°</span></li>
+                <li id="info-result" class="font-bold text-indigo-700 mt-2">👉 입체를 만들 수 있습니다! (정사면체)</li>
+            </ul>
+        </div>
+
+        <!-- 3. 접기/펼치기 컨트롤 -->
+        <div class="flex gap-3 mt-auto">
+            <button id="btn-unfold" class="flex-1 bg-white border-2 border-indigo-600 text-indigo-600 py-3 rounded-xl font-bold hover:bg-indigo-50 transition">평면 (펼치기)</button>
+            <button id="btn-fold" class="flex-1 bg-indigo-600 text-white py-3 rounded-xl font-bold hover:bg-indigo-700 transition shadow-md shadow-indigo-200">입체 (접기)</button>
+        </div>
+
+        <!-- 4. 완성된 입체 보기 (입체 생성 조건이 맞을 때만 노출) -->
+        <div id="complete-view-container" class="mt-3 hidden">
+            <button id="btn-toggle-view" class="w-full bg-gradient-to-r from-purple-500 to-indigo-600 text-white py-3 rounded-xl font-bold hover:shadow-lg transition">✨ 완성된 입체도형 보기</button>
+        </div>
+    </aside>
+
+    <!-- 우측 3D 캔버스 영역 -->
+    <main id="canvas-container" class="flex-1 relative bg-gradient-to-br from-gray-100 to-gray-200">
+        <div class="absolute top-4 right-4 bg-white/80 backdrop-blur px-4 py-2 rounded-lg shadow-sm text-sm text-gray-600 pointer-events-none">
+            💡 마우스 좌클릭 드래그: 회전 / 휠: 확대·축소
+        </div>
+    </main>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+        /* ==========================================
+           1. 기본 설정 및 데이터 정의
+           ========================================== */
+        
+        const SHAPE_CONFIG = {
+            3: { name: '정삼각형', max: 5, intAngle: 60,  color: 0xFFB347, edgeColor: 0xCC7A00 },
+            4: { name: '정사각형', max: 3, intAngle: 90,  color: 0x4DA6FF, edgeColor: 0x0059B3 },
+            5: { name: '정오각형', max: 3, intAngle: 108, color: 0x66CC99, edgeColor: 0x2E8B57 }
+        };
+
+        const FOLD_ANGLES = {
+            '3_3': (180 - 70.53) * Math.PI / 180,  // 정사면체
+            '3_4': (180 - 109.47) * Math.PI / 180, // 정팔면체
+            '3_5': (180 - 138.19) * Math.PI / 180, // 정이십면체
+            '4_3': (180 - 90) * Math.PI / 180,     // 정육면체
+            '5_3': (180 - 116.57) * Math.PI / 180  // 정십이면체
+        };
+
+        // 한 변의 길이를 6으로 통일하기 위한 Three.js 기본 다면체의 외접구 반지름 계산 (수학 공식 활용)
+        const EDGE_LENGTH = 6;
+        const SOLID_RADIUS = {
+            '3_3': EDGE_LENGTH / Math.sqrt(8/3), // 정사면체
+            '3_4': EDGE_LENGTH / Math.sqrt(2),   // 정팔면체
+            '3_5': EDGE_LENGTH / (4 / Math.sqrt(10 + 2 * Math.sqrt(5))), // 정이십면체
+            '5_3': EDGE_LENGTH / ((Math.sqrt(5) - 1) / Math.sqrt(3))     // 정십이면체
+            // 정육면체는 BoxGeometry에서 직접 지정하므로 제외
+        };
+
+        let currentShape = 3;
+        let currentCount = 3;
+        let isFolded = false;
+        let isCompleteView = false; // "완성된 입체도형" 보기 모드 여부
+        
+        let targetFoldAngle = 0;
+        let currentFoldAngle = 0;
+        let hinges = []; 
+
+        /* ==========================================
+           2. Three.js 초기 셋업
+           ========================================== */
+        
+        const container = document.getElementById('canvas-container');
+        const scene = new THREE.Scene();
+        scene.background = null; 
+
+        const camera = new THREE.PerspectiveCamera(45, container.clientWidth / container.clientHeight, 0.1, 1000);
+        camera.position.set(0, -15, 20); 
+
+        const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+        renderer.setSize(container.clientWidth, container.clientHeight);
+        renderer.setPixelRatio(window.devicePixelRatio);
+        renderer.shadowMap.enabled = true;
+        renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+        container.appendChild(renderer.domElement);
+
+        const controls = new OrbitControls(camera, renderer.domElement);
+        controls.enableDamping = true; 
+        controls.dampingFactor = 0.05;
+
+        scene.add(new THREE.AmbientLight(0xffffff, 0.6));
+        const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
+        dirLight.position.set(10, 20, 20);
+        dirLight.castShadow = true;
+        scene.add(dirLight);
+
+        const gridHelper = new THREE.GridHelper(30, 30, 0xdddddd, 0xeeeeee);
+        gridHelper.rotation.x = Math.PI / 2;
+        gridHelper.position.z = -0.5;
+        scene.add(gridHelper);
+
+        // 한 꼭짓점 탐험용 그룹
+        const shapeGroup = new THREE.Group();
+        scene.add(shapeGroup);
+
+        // 최종 완성본을 보여줄 그룹
+        const completeGroup = new THREE.Group();
+        scene.add(completeGroup);
+
+        /* ==========================================
+           3. 지오메트리 생성 및 배치 (탐험 모드 & 완성 모드)
+           ========================================== */
+
+        function createPolygonGeometry(sides, length) {
+            const shape = new THREE.Shape();
+            const extAngle = (Math.PI * 2) / sides;
+            shape.moveTo(0, 0);
+            
+            let currentPos = new THREE.Vector2(0, 0);
+            let currentAngle = 0;
+
+            currentPos.x += length;
+            shape.lineTo(currentPos.x, currentPos.y);
+
+            for (let i = 1; i < sides; i++) {
+                currentAngle += extAngle;
+                currentPos.x += length * Math.cos(currentAngle);
+                currentPos.y += length * Math.sin(currentAngle);
+                shape.lineTo(currentPos.x, currentPos.y);
+            }
+
+            const geometry = new THREE.ExtrudeGeometry(shape, { depth: 0.2, bevelEnabled: true, bevelSegments: 2, steps: 1, bevelSize: 0.05, bevelThickness: 0.05 });
+            geometry.translate(0, 0, -0.1); 
+            return geometry;
+        }
+
+        // 1. 꼭짓점 탐구 모드 렌더링
+        function buildShapes() {
+            while(shapeGroup.children.length > 0) shapeGroup.remove(shapeGroup.children[0]); 
+            hinges = [];
+
+            const config = SHAPE_CONFIG[currentShape];
+            const geometry = createPolygonGeometry(currentShape, EDGE_LENGTH); 
+            
+            const material = new THREE.MeshStandardMaterial({ color: config.color, roughness: 0.5, metalness: 0.1, side: THREE.DoubleSide });
+            const edgeMaterial = new THREE.LineBasicMaterial({ color: config.edgeColor, linewidth: 2 });
+            const intAngleRad = config.intAngle * Math.PI / 180; 
+            let parent = shapeGroup;
+
+            for (let i = 0; i < currentCount; i++) {
+                const group = new THREE.Group();
+                group.rotation.order = 'ZYX';
+
+                const mesh = new THREE.Mesh(geometry, material);
+                mesh.castShadow = true;
+                mesh.receiveShadow = true;
+                const edges = new THREE.LineSegments(new THREE.EdgesGeometry(geometry), edgeMaterial);
+                
+                group.add(mesh);
+                group.add(edges);
+
+                if (i > 0) group.rotation.z = intAngleRad;
+
+                parent.add(group);
+                hinges.push(group);
+                parent = group; 
+            }
+
+            shapeGroup.rotation.z = - (currentCount * intAngleRad) / 2 + (intAngleRad / 2);
+        }
+
+        // 2. 완성된 입체 렌더링
+        function buildCompleteSolid() {
+            while(completeGroup.children.length > 0) completeGroup.remove(completeGroup.children[0]);
+            
+            const key = `${currentShape}_${currentCount}`;
+            const config = SHAPE_CONFIG[currentShape];
+            let geom;
+
+            // 조건에 맞는 Three.js 내장 다면체 지오메트리 생성
+            if (key === '3_3') geom = new THREE.TetrahedronGeometry(SOLID_RADIUS['3_3']);
+            else if (key === '3_4') geom = new THREE.OctahedronGeometry(SOLID_RADIUS['3_4']);
+            else if (key === '3_5') geom = new THREE.IcosahedronGeometry(SOLID_RADIUS['3_5']);
+            else if (key === '4_3') geom = new THREE.BoxGeometry(EDGE_LENGTH, EDGE_LENGTH, EDGE_LENGTH);
+            else if (key === '5_3') geom = new THREE.DodecahedronGeometry(SOLID_RADIUS['5_3']);
+
+            if (!geom) return;
+
+            // 완성된 입체는 약간 반투명하게 처리하여 내부 구조도 짐작할 수 있게 함
+            const material = new THREE.MeshStandardMaterial({
+                color: config.color,
+                roughness: 0.3,
+                metalness: 0.2,
+                transparent: true,
+                opacity: 0.9,
+                side: THREE.DoubleSide
+            });
+            const edgeMaterial = new THREE.LineBasicMaterial({ color: config.edgeColor, linewidth: 2 });
+
+            const mesh = new THREE.Mesh(geom, material);
+            mesh.castShadow = true;
+            mesh.receiveShadow = true;
+            const edges = new THREE.LineSegments(new THREE.EdgesGeometry(geom), edgeMaterial);
+
+            completeGroup.add(mesh);
+            completeGroup.add(edges);
+
+            // 바닥에 파묻히지 않도록 공중으로 살짝 띄움
+            completeGroup.position.set(0, 0, EDGE_LENGTH / 1.5);
+            
+            // 초기 회전값 리셋
+            completeGroup.rotation.set(0, 0, 0);
+        }
+
+        /* ==========================================
+           4. UI 업데이트 및 이벤트 처리
+           ========================================== */
+
+        const DOM = {
+            btns: document.querySelectorAll('.shape-btn'),
+            slider: document.getElementById('count-slider'),
+            countDisplay: document.getElementById('count-display'),
+            maxLabel: document.getElementById('max-label'),
+            infoAngle: document.getElementById('info-angle'),
+            infoSum: document.getElementById('info-sum'),
+            infoResult: document.getElementById('info-result'),
+            btnFold: document.getElementById('btn-fold'),
+            btnUnfold: document.getElementById('btn-unfold'),
+            completeViewContainer: document.getElementById('complete-view-container'),
+            btnToggleView: document.getElementById('btn-toggle-view')
+        };
+
+        function updateInfoPanel() {
+            const config = SHAPE_CONFIG[currentShape];
+            const sum = config.intAngle * currentCount;
+            
+            DOM.infoAngle.innerText = `${config.intAngle}°`;
+            DOM.infoSum.innerText = `${sum}°`;
+
+            let canMakeSolid = false;
+
+            if (currentCount < 3) {
+                DOM.infoSum.className = "font-bold text-green-600";
+                DOM.infoResult.innerText = "⚠️ 입체를 만들려면 최소 3개가 모여야 합니다.";
+                DOM.infoResult.className = "font-bold text-red-500 mt-2";
+                DOM.btnFold.disabled = true;
+                DOM.btnFold.classList.add('opacity-50', 'cursor-not-allowed');
+            } else if (sum < 360) {
+                DOM.infoSum.className = "font-bold text-indigo-600";
+                canMakeSolid = true; // 입체 형성 가능!
+                
+                let solidName = "";
+                if (currentShape === 3 && currentCount === 3) solidName = "정사면체";
+                else if (currentShape === 3 && currentCount === 4) solidName = "정팔면체";
+                else if (currentShape === 3 && currentCount === 5) solidName = "정이십면체";
+                else if (currentShape === 4 && currentCount === 3) solidName = "정육면체";
+                else if (currentShape === 5 && currentCount === 3) solidName = "정십이면체";
+                
+                DOM.infoResult.innerText = `👉 입체를 만들 수 있습니다! (${solidName})`;
+                DOM.infoResult.className = "font-bold text-indigo-700 mt-2";
+                DOM.btnFold.disabled = false;
+                DOM.btnFold.classList.remove('opacity-50', 'cursor-not-allowed');
+            } else {
+                DOM.infoSum.className = "font-bold text-red-600";
+                DOM.infoResult.innerText = "❌ 각의 합이 360° 이상이 되어 입체를 만들 수 없습니다.";
+                DOM.infoResult.className = "font-bold text-red-500 mt-2";
+                DOM.btnFold.disabled = true;
+                DOM.btnFold.classList.add('opacity-50', 'cursor-not-allowed');
+            }
+
+            // 입체를 만들 수 있을 때만 완성 모드 버튼 컨테이너 노출
+            if (canMakeSolid) {
+                DOM.completeViewContainer.classList.remove('hidden');
+            } else {
+                DOM.completeViewContainer.classList.add('hidden');
+                isCompleteView = false;
+                applyViewMode();
+            }
+        }
+
+        // 모드(탐험/완성)에 따라 화면 전환 처리
+        function applyViewMode() {
+            if (isCompleteView) {
+                DOM.btnToggleView.innerText = "🔙 꼭짓점 탐구로 돌아가기";
+                DOM.btnToggleView.classList.replace('from-purple-500', 'from-gray-500');
+                DOM.btnToggleView.classList.replace('to-indigo-600', 'to-gray-600');
+                
+                // 완성 모드일 때 접기/펼치기 비활성화
+                DOM.btnFold.disabled = true;
+                DOM.btnUnfold.disabled = true;
+                DOM.btnFold.classList.add('opacity-50');
+                DOM.btnUnfold.classList.add('opacity-50');
+
+                shapeGroup.visible = false;
+                completeGroup.visible = true;
+                buildCompleteSolid();
+            } else {
+                DOM.btnToggleView.innerText = "✨ 완성된 입체도형 보기";
+                DOM.btnToggleView.classList.replace('from-gray-500', 'from-purple-500');
+                DOM.btnToggleView.classList.replace('to-gray-600', 'to-indigo-600');
+
+                // 탐구 모드일 때 접기/펼치기 활성화
+                DOM.btnFold.disabled = false;
+                DOM.btnUnfold.disabled = false;
+                DOM.btnFold.classList.remove('opacity-50');
+                DOM.btnUnfold.classList.remove('opacity-50');
+
+                shapeGroup.visible = true;
+                completeGroup.visible = false;
+            }
+        }
+
+        function onStateChange() {
+            // 사용자가 설정을 변경하면 강제로 '탐험 모드' 및 '펼쳐진 상태'로 초기화
+            isFolded = false;
+            isCompleteView = false;
+            targetFoldAngle = 0;
+            currentFoldAngle = 0;
+            
+            const config = SHAPE_CONFIG[currentShape];
+            DOM.slider.max = config.max;
+            DOM.maxLabel.innerText = `${config.max}개`;
+            
+            if (currentCount > config.max) {
+                currentCount = config.max;
+                DOM.slider.value = currentCount;
+            }
+            DOM.countDisplay.innerText = `${currentCount}개`;
+            
+            updateInfoPanel();
+            applyViewMode();
+            buildShapes();
+        }
+
+        DOM.btns.forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                DOM.btns.forEach(b => {
+                    b.classList.remove('border-indigo-500', 'bg-indigo-50', 'text-indigo-700');
+                    b.classList.add('border-gray-200', 'text-gray-600');
+                });
+                const target = e.currentTarget;
+                target.classList.remove('border-gray-200', 'text-gray-600');
+                target.classList.add('border-indigo-500', 'bg-indigo-50', 'text-indigo-700');
+
+                currentShape = parseInt(target.dataset.shape);
+                onStateChange();
+            });
+        });
+
+        DOM.slider.addEventListener('input', (e) => {
+            currentCount = parseInt(e.target.value);
+            onStateChange();
+        });
+
+        DOM.btnFold.addEventListener('click', () => {
+            if (currentCount < 3) return; 
+            isFolded = true;
+            const key = `${currentShape}_${currentCount}`;
+            targetFoldAngle = FOLD_ANGLES[key] || 0;
+        });
+
+        DOM.btnUnfold.addEventListener('click', () => {
+            isFolded = false;
+            targetFoldAngle = 0; 
+        });
+
+        // "완성된 입체도형 보기" 토글 버튼 이벤트
+        DOM.btnToggleView.addEventListener('click', () => {
+            isCompleteView = !isCompleteView;
+            applyViewMode();
+        });
+
+        /* ==========================================
+           5. 렌더링 루프 및 애니메이션
+           ========================================== */
+
+        function animate() {
+            requestAnimationFrame(animate);
+
+            // 탐험 모드 애니메이션 (부채꼴 접기/펼치기)
+            if (!isCompleteView) {
+                currentFoldAngle += (targetFoldAngle - currentFoldAngle) * 0.1;
+                for (let i = 1; i < hinges.length; i++) {
+                    hinges[i].rotation.x = currentFoldAngle; 
+                }
+            } 
+            // 완성 모드 애니메이션 (천천히 자전)
+            else if (completeGroup.visible) {
+                completeGroup.rotation.y += 0.005; // Y축 회전
+                completeGroup.rotation.x += 0.002; // X축 약간 회전
+            }
+
+            controls.update(); 
+            renderer.render(scene, camera);
+        }
+
+        window.addEventListener('resize', () => {
+            camera.aspect = container.clientWidth / container.clientHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(container.clientWidth, container.clientHeight);
+        });
+
+        onStateChange();
+        animate();
+
+    </script>
+</body>
+</html>
